@@ -1,9 +1,11 @@
 class UserController < ApiController
+  before_action :authenticate_user!
+
   def create
     head :created
   end
 
   def me
-    render(json: {}, status: :ok)
+    render(json: current_user, status: :ok)
   end
 end
