@@ -5,13 +5,30 @@ Doorkeeper.configure do
   # Check the list of supported ORMs here: https://github.com/doorkeeper-gem/doorkeeper#orms
   orm :active_record
 
+  access_token_generator "::Doorkeeper::JWT"
+
   # This block will be called to check whether the resource owner is authenticated or not.
-  resource_owner_authenticator do
-    raise "Please configure doorkeeper resource_owner_authenticator block located in #{__FILE__}"
-    # Put your resource owner authentication logic here.
-    # Example implementation:
-    #   User.find_by(id: session[:user_id]) || redirect_to(new_user_session_url)
+  resource_owner_from_credentials do |routes|
+    request.params[:user] = {email: request.params[:username], password: request.params[:password]}
+    request.env["warden"].logout(:user)
+    request.env["devise.allow_params_authentication"] = true
+    # Set `store: false` to stop Warden from storing user in session
+    # https://github.com/doorkeeper-gem/doorkeeper/issues/475#issuecomment-305517549
+    request.env["warden"].authenticate!(scope: :user, store: false)
   end
+
+  resource_owner_authenticator do
+    current_user || warden.authenticate!(scope: :user)
+  end
+
+  admin_authenticator do |routes|
+    current_user || warden.authenticate!(scope: :user)
+  end
+
+  default_scopes :public
+  optional_scopes :player
+    
+  enforce_configured_scopes
 
   # If you didn't skip applications controller from Doorkeeper routes in your application routes.rb
   # file then you need to declare this block in order to restrict access to the web interface for
@@ -149,7 +166,7 @@ Doorkeeper.configure do
   # `grant_type` - the grant type of the request (see Doorkeeper::OAuth)
   # `scopes` - the requested scopes (see Doorkeeper::OAuth::Scopes)
   #
-  # use_refresh_token
+  use_refresh_token
 
   # Provide support for an owner to be assigned to each registered application (disabled by default)
   # Optional parameter confirmation: true (default: false) if you want to enforce ownership of
@@ -280,7 +297,7 @@ Doorkeeper.configure do
   #   http://tools.ietf.org/html/rfc6819#section-4.4.2
   #   http://tools.ietf.org/html/rfc6819#section-4.4.3
   #
-  # grant_flows %w[authorization_code client_credentials]
+  grant_flows %w[password]
 
   # Allows to customize OAuth grant flows that +each+ application support.
   # You can configure a custom block (or use a class respond to `#call`) that must
@@ -403,4 +420,49 @@ Doorkeeper.configure do
   # WWW-Authenticate Realm (default: "Doorkeeper").
   #
   # realm "Doorkeeper"
+end
+
+Doorkeeper::JWT.configure do
+  # Set the payload for the JWT token. This should contain unique information
+  # about the user. Defaults to a randomly generated token in a hash:
+  #     { token: "RANDOM-TOKEN" }
+  token_payload do |opts|
+    puts "debugprint"
+    user = User.find(opts[:resource_owner_id])
+    puts "beginuser"
+    puts user.email
+    puts "enduser"
+
+    {
+      iss: 'CodingTycoon',
+      iat: Time.current.utc.to_i,
+
+      # @see JWT reserved claims - https://tools.ietf.org/html/draft-jones-json-web-token-07#page-7
+      jti: SecureRandom.uuid,
+
+      user: {
+        id: user.id,
+        email: user.email
+      }
+    }
+  end
+
+  # Optionally set additional headers for the JWT. See
+  # https://tools.ietf.org/html/rfc7515#section-4.1
+  # token_headers do |opts|
+  #   { kid: opts[:application][:uid] }
+  # end
+
+  # Use the application secret specified in the access grant token. Defaults to
+  # `false`. If you specify `use_application_secret true`, both `secret_key` and
+  # `secret_key_path` will be ignored.
+  use_application_secret true
+
+  # Set the encryption secret. This would be shared with any other applications
+  # that should be able to read the payload of the token. Defaults to "secret".
+  # secret_key ENV['JWT_SECRET']
+
+  # Specify encryption type (https://github.com/progrium/ruby-jwt). Defaults to
+  # `nil`.
+  encryption_method :hs512
 end
